@@ -1,7 +1,8 @@
 #define KL_LOG KL_DEV
-#include <dev/piixreg.h>
+/* #include <dev/piixreg.h> */
 /* #include <dev/isareg.h> */
-#include <dev/isapnpreg.h>
+/* #include <dev/isapnpreg.h> */
+#include <dev/pnpreg.h>
 #include <bus.h>
 #include <interrupt.h>
 #include <stdc.h>
@@ -10,14 +11,10 @@
 #include <sync.h>
 #include <sysinit.h>
 
-
-
-
 /* The READ_DATA port that we are using currently */
 static int pnp_rd_port;
 
 static resource_t *isa_io_ports; 
-
 
 
 typedef struct _pnp_id {
@@ -28,10 +25,162 @@ typedef struct _pnp_id {
 
 
 
-static int pnp_isolation_protocol(/*device_t parent*/ void);
-static int pnp_get_serial(pnp_id *p);
+static inline void outb(unsigned port, uint8_t value) {
+    bus_space_write_1(isa_io_ports, port, value);
+}
+
+static inline uint8_t inb(unsigned port) {
+    return bus_space_read_1(isa_io_ports, port);
+}
+
+static void pnp_write(int d, uint8_t r)
+{
+	outb (_PNP_ADDRESS, d);
+	outb (_PNP_WRITE_DATA, r);
+}
 
 
+/*
+ * Send Initiation LFSR as described in "Plug and Play ISA Specification",
+ * Intel May 94.
+ */
+static void pnp_send_initiation_key(void)
+{
+	int cur, i;
+
+	/* Reset the LSFR */
+	outb(_PNP_ADDRESS, 0);
+	outb(_PNP_ADDRESS, 0); /* yes, we do need it twice! */
+
+	cur = 0x6a;
+	outb(_PNP_ADDRESS, cur);
+
+	for (i = 1; i < 32; i++) {
+		cur = (cur >> 1) | (((cur ^ (cur >> 1)) << 7) & 0xff);
+		outb(_PNP_ADDRESS, cur);
+	}
+}
+
+
+/*
+ * Get the device's serial number.  Returns 1 if the serial is valid.
+ */
+static int
+pnp_get_serial(pnp_id *p)
+{
+	int i, bit, valid = 0, sum = 0x6a;
+	uint8_t *data = (uint8_t *)p;
+
+	bzero(data, sizeof(char) * 9);
+	outb(_PNP_ADDRESS, PNP_SERIAL_ISOLATION);
+	for (i = 0; i < 72; i++) {
+		bit = inb((pnp_rd_port << 2) | 0x3) == 0x55;
+		/* DELAY(250); */	/* Delay 250 usec */
+
+		/* Can't Short Circuit the next evaluation, so 'and' is last */
+		bit = (inb((pnp_rd_port << 2) | 0x3) == 0xaa) && bit;
+		/* DELAY(250); */	/* Delay 250 usec */
+
+		valid = valid || bit;
+		if (i < 64)
+			sum = (sum >> 1) |
+			  (((sum ^ (sum >> 1) ^ bit) << 7) & 0xff);
+		data[i / 8] = (data[i / 8] >> 1) | (bit ? 0x80 : 0);
+	}
+
+	valid = valid && (data[8] == sum);
+
+	return (valid);
+}
+
+
+/*
+ * Run the isolation protocol. Use pnp_rd_port as the READ_DATA port
+ * value (caller should try multiple READ_DATA locations before giving
+ * up). Upon exiting, all cards are aware that they should use
+ * pnp_rd_port as the READ_DATA port.
+ *
+ * In the first pass, a csn is assigned to each board and pnp_id's
+ * are saved to an array, pnp_devices. In the second pass, each
+ * card is woken up and the device configuration is called.
+ */
+static int
+pnp_isolation_protocol(void)
+{
+	int csn;
+	pnp_id id;
+	int found = 0;
+	/* , len; */
+	/* /\* u_char *resources = 0; *\/ */
+	/* int space = 0; */
+	/* int error; */
+/* #ifdef PC98 */
+/* 	int n, necpnp; */
+/* 	u_char buffer[10]; */
+/* #endif */
+
+	/*
+	 * Put all cards into the Sleep state so that we can clear
+	 * their CSNs.
+	 */
+	pnp_send_initiation_key();
+
+	/*
+	 * Clear the CSN for all cards.
+	 */
+	pnp_write(PNP_CONFIG_CONTROL, PNP_CONFIG_CONTROL_RESET_CSN);
+
+	/*
+	 * Move all cards to the Isolation state.
+	 */
+	pnp_write(PNP_WAKE, 0);
+
+	/*
+	 * Tell them where the read point is going to be this time.
+	 */
+	pnp_write(PNP_SET_RD_DATA, pnp_rd_port);
+
+	for (csn = 1; csn < PNP_MAX_CARDS; csn++) {
+		/*
+		 * Start the serial isolation protocol.
+		 */
+		outb(_PNP_ADDRESS, PNP_SERIAL_ISOLATION);
+		/* DELAY(1000); */	/* Delay 1 msec */
+
+		if (pnp_get_serial(&id)) {
+
+		  kprintf("FOUND!!\n");
+			/*
+			 * We have read the id from a card
+			 * successfully. The card which won the
+			 * isolation protocol will be in Isolation
+			 * mode and all others will be in Sleep.
+			 * Program the CSN of the isolated card
+			 * (taking it to Config state) and read its
+			 * resources, creating devices as we find
+			 * logical devices on the card.
+			 */
+/* 			pnp_write(PNP_SET_CSN, csn); */
+		} else 
+		  break;
+
+/* 		/\* */
+/* 		 * Put this card back to the Sleep state and */
+/* 		 * simultaneously move all cards which don't have a */
+/* 		 * CSN yet to Isolation state. */
+/* 		 *\/ */
+/* 		pnp_write(PNP_WAKE, 0); */
+	}
+
+	/*
+	 * Unless we have chosen the wrong read port, all cards will
+	 * be in Sleep state. Put them back into WaitForKey for
+	 * now. Their resources will be programmed later.
+	 */
+	pnp_write(PNP_CONFIG_CONTROL, PNP_CONFIG_CONTROL_WAIT_FOR_KEY);
+
+	return (found);
+}
 
 
 /*
@@ -52,220 +201,11 @@ static void pnp_identify(void) {
 			kprintf("pnp_identify: Trying Read_Port at %x\n",
 			    (pnp_rd_port << 2) | 0x3);
 
-		num_pnp_devs = pnp_isolation_protocol( );
+		num_pnp_devs = pnp_isolation_protocol();
 		if (num_pnp_devs)
 			break;
 	}
 		kprintf("PNP Identify complete\n");
-}
-
-
-
-
-
-static inline void isa_outb(unsigned port, uint8_t value) {
-    bus_space_write_1(isa_io_ports, port, value);
-}
-
-static inline uint8_t isa_inb(unsigned port) {
-    return bus_space_read_1(isa_io_ports, port);
-}
-
-
-static void pnp_write(unsigned d, uint8_t r)
-{
-    isa_outb (ISAPNP_ADDR, d);
-    isa_outb (ISAPNP_WRDATA, r);
-}
-
-
-
-/*
- * Send Initiation LFSR as described in "Plug and Play ISA Specification",
- * Intel May 94.
- */
-
-static void pnp_send_initiation_key(resource_t *io_ports) {
-    int cur, i;
-    
-    /* Reset the LSFR */
-    bus_space_write_1(io_ports, ISAPNP_ADDR, 0);
-    bus_space_write_1(io_ports, ISAPNP_ADDR, 0); /* yes, we do need it twice! */
-
-    cur = 0x6a;
-    bus_space_write_1(io_ports, ISAPNP_ADDR, cur);
-
-    for (i = 1; i < 32; i++) {
-      cur = (cur >> 1) | (((cur ^ (cur >> 1)) << 7) & 0xff);
-      bus_space_write_1(io_ports, ISAPNP_ADDR, cur);
-    }
-}
-
-
-
-
-/*
- * Run the isolation protocol. Use pnp_rd_port as the READ_DATA port
- * value (caller should try multiple READ_DATA locations before giving
- * up). Upon exiting, all cards are aware that they should use
- * pnp_rd_port as the READ_DATA port.
- *
- * In the first pass, a csn is assigned to each board and pnp_id's
- * are saved to an array, pnp_devices. In the second pass, each
- * card is woken up and the device configuration is called.
- */
-static int
-pnp_isolation_protocol(/*device_t parent*/ void)
-{
-	int csn;
-	pnp_id id;
-/* 	int found = 0, len; */
-/* 	u_char *resources = 0; */
-/* 	int space = 0; */
-/* 	int error; */
-/* #ifdef PC98 */
-/* 	int n, necpnp; */
-/* 	u_char buffer[10]; */
-/* #endif */
-
-	/*
-	 * Put all cards into the Sleep state so that we can clear
-	 * their CSNs.
-	 */
-	pnp_send_initiation_key(isa_io_ports);
-
-	/*
-	 * Clear the CSN for all cards.
-	 */
-	
-	pnp_write(ISAPNP_CONFIG_CONTROL, ISAPNP_CC_RESET_CSN);
-
-	/*
-	 * Move all cards to the Isolation state.
-	 */
-	pnp_write(ISAPNP_WAKE, 0);
-
-	/*
-	 * Tell them where the read point is going to be this time.
-	 */
-	pnp_write(ISAPNP_SET_RD_PORT, pnp_rd_port);
-
-	for (csn = 1; csn < ISAPNP_MAX_CARDS; csn++) {
-		/*
-		 * Start the serial isolation protocol.
-		 */
-	  isa_outb(ISAPNP_ADDR, ISAPNP_SERIAL_ISOLATION);
-
-
-	  	  /* DELAY(1000); */	/* Delay 1 msec*/
-	    
-
-		if (pnp_get_serial(&id)) {
-
-
-		  kprintf("FOUND!\n");
-		  
-			/*
-			 * We have read the id from a card
-			 * successfully. The card which won the
-			 * isolation protocol will be in Isolation
-			 * mode and all others will be in Sleep.
-			 * Program the CSN of the isolated card
-			 * (taking it to Config state) and read its
-			 * resources, creating devices as we find
-			 * logical devices on the card.
-			 */
-/* 			pnp_write(PNP_SET_CSN, csn); */
-/* #ifdef PC98 */
-/* 			if (bootverbose) */
-/* 				printf("PnP Vendor ID = %x\n", id.vendor_id); */
-/* 			/\* Check for NEC PnP (9 bytes serial). *\/ */
-/* 			for (n = necpnp = 0; necids[n].vendor_id; n++) { */
-/* 				if (id.vendor_id == necids[n].vendor_id) { */
-/* 					necpnp = 1; */
-/* 					break; */
-/* 				} */
-/* 			} */
-/* 			if (necpnp) { */
-/* 				if (bootverbose) */
-/* 					printf("An NEC-PnP card (%s).\n", */
-/* 					    pnp_eisaformat(id.vendor_id)); */
-/* 				/\*  Read dummy 9 bytes serial area. *\/ */
-/* 				pnp_get_resource_info(buffer, 9); */
-/* 			} else { */
-/* 				if (bootverbose) */
-/* 					printf("A Normal-ISA-PnP card (%s).\n", */
-/* 					    pnp_eisaformat(id.vendor_id)); */
-/* 			} */
-/* #endif */
-/* 			if (bootverbose) */
-/* 				printf("Reading PnP configuration for %s.\n", */
-/* 				    pnp_eisaformat(id.vendor_id)); */
-/* 			error = pnp_read_resources(&resources, &space, &len); */
-/* 			if (error) */
-/* 				break; */
-/* 			pnp_create_devices(parent, &id, csn, resources, len); */
-/* 			found++; */
-		} else
-			break;
-
-/* 		/\* */
-/* 		 * Put this card back to the Sleep state and */
-/* 		 * simultaneously move all cards which don't have a */
-/* 		 * CSN yet to Isolation state. */
-/* 		 *\/ */
-/* 		pnp_write(PNP_WAKE, 0); */
-	}
-
-/* 	/\* */
-/* 	 * Unless we have chosen the wrong read port, all cards will */
-/* 	 * be in Sleep state. Put them back into WaitForKey for */
-/* 	 * now. Their resources will be programmed later. */
-/* 	 *\/ */
-/* 	pnp_write(PNP_CONFIG_CONTROL, PNP_CONFIG_CONTROL_WAIT_FOR_KEY); */
-
-/* 	/\* */
-/* 	 * Cleanup. */
-/* 	 *\/ */
-/* 	if (resources) */
-/* 		free(resources, M_TEMP); */
-
-/* 	return (found); */
-
-	return 0;
-}
-
-
-
-/*
- * Get the device's serial number.  Returns 1 if the serial is valid.
- */
-static int
-pnp_get_serial(pnp_id *p)
-{
-	int i, bit, valid = 0, sum = 0x6a;
-	uint8_t *data = (uint8_t *)p;
-
-	bzero(data, sizeof(char) * 9);
-	isa_outb(ISAPNP_ADDR, ISAPNP_SERIAL_ISOLATION);
-	for (i = 0; i < 72; i++) {
-		bit = isa_inb((pnp_rd_port << 2) | 0x3) == 0x55;
-		/* DELAY(250);	/\* Delay 250 usec *\/ */
-
-		/* Can't Short Circuit the next evaluation, so 'and' is last */
-		bit = (isa_inb((pnp_rd_port << 2) | 0x3) == 0xaa) && bit;
-		/* DELAY(250);	/\* Delay 250 usec *\/ */
-
-		valid = valid || bit;
-		if (i < 64)
-			sum = (sum >> 1) |
-			  (((sum ^ (sum >> 1) ^ bit) << 7) & 0xff);
-		data[i / 8] = (data[i / 8] >> 1) | (bit ? 0x80 : 0);
-	}
-
-	valid = valid && (data[8] == sum);
-
-	return (valid);
 }
 
 
@@ -285,13 +225,8 @@ static int isapnp_attach(device_t *dev) {
   isa->io_ports = pcib->io_space;
   dev->bus = DEV_BUS_ISA;
 
-
   isa_io_ports = isa->io_ports;
   
-  /* pnp_send_initiation_key(isa->io_ports); */
-
-  /* pnp_isolation_protocol(); */
-
   pnp_identify();
 
   return 0;
