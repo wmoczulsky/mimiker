@@ -20,7 +20,8 @@ SOURCES_C = \
 	uiomove.c \
 	utest.c \
 	vm_map.c \
-	vfs.c
+	vfs.c \
+	isapnp.c
 
 SOURCES_ASM =
 
