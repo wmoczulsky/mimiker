@@ -110,14 +110,6 @@ pnp_isolation_protocol(void)
 	int csn;
 	pnp_id id;
 	int found = 0;
-	/* , len; */
-	/* /\* u_char *resources = 0; *\/ */
-	/* int space = 0; */
-	/* int error; */
-/* #ifdef PC98 */
-/* 	int n, necpnp; */
-/* 	u_char buffer[10]; */
-/* #endif */
 
 	/*
 	 * Put all cards into the Sleep state so that we can clear
@@ -149,7 +141,7 @@ pnp_isolation_protocol(void)
 
 		if (pnp_get_serial(&id)) {
 
-		  kprintf("FOUND!!\n");
+		  kprintf("An ISA PnP card was found!\n");
 			/*
 			 * We have read the id from a card
 			 * successfully. The card which won the
@@ -164,12 +156,12 @@ pnp_isolation_protocol(void)
 		} else 
 		  break;
 
-/* 		/\* */
-/* 		 * Put this card back to the Sleep state and */
-/* 		 * simultaneously move all cards which don't have a */
-/* 		 * CSN yet to Isolation state. */
-/* 		 *\/ */
-/* 		pnp_write(PNP_WAKE, 0); */
+		/*
+		 * Put this card back to the Sleep state and
+		 * simultaneously move all cards which don't have a
+		 * CSN yet to Isolation state.
+		 */
+		pnp_write(PNP_WAKE, 0);
 	}
 
 	/*
@@ -224,7 +216,7 @@ static int isapnp_attach(device_t *dev) {
 
   isa->io_ports = pcib->io_space;
   dev->bus = DEV_BUS_ISA;
-
+  
   isa_io_ports = isa->io_ports;
   
   pnp_identify();
