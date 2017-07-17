@@ -15,7 +15,7 @@
 static runq_t runq;
 static bool sched_active = false;
 
-#define SLICE 10
+#define SLICE 1
 
 static void sched_init(void) {
   runq_init(&runq);
