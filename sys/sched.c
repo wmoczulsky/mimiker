@@ -68,10 +68,9 @@ void sched_switch(void) {
   if (!sched_active)
     return;
 
-  SCOPED_NO_PREEMPTION();
-
   thread_t *td = thread_self();
 
+  assert(preempt_disabled());
   assert(td->td_state != TDS_RUNNING);
 
   td->td_flags &= ~(TDF_SLICEEND | TDF_NEEDSWITCH);

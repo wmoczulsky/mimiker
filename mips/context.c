@@ -35,8 +35,10 @@ void ctx_init(thread_t *td, void (*target)(void *), void *arg) {
   /* Status register: Take interrupt mask and exception vector location from
      caller's context. */
   kframe->sr = sr & (SR_IMASK | SR_BEV);
-  /* Set Interrupt Enable and Exception Level. */
-  kframe->sr |= SR_EXL | SR_IE;
+  /* Enter kern_exc_leave in Exception Level with interrupts disabled. */
+  kframe->sr |= SR_EXL;
+  /* Interrupt Enable flag will be restored by call to intr_enable. */
+  td->td_idnest = 1;
 }
 
 void uctx_init(thread_t *td, vm_addr_t pc, vm_addr_t sp) {

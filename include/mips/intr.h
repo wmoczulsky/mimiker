@@ -42,9 +42,20 @@ void mips_intr_enable(void);
  */
 bool mips_intr_disabled(void);
 
+/*! \brief Initialize processor interrupts. */
 void mips_intr_init(void);
+
+/*! \brief Handle processor interrupts.
+ *
+ * All interrupts handlers are executed with interrupts disabled!
+ *
+ * \warning You must not enable interrupts during interrupt handling! */
 void mips_intr_handler(exc_frame_t *frame);
+
+/*! \brief Set up processor interrupt handler. */
 void mips_intr_setup(intr_handler_t *ih, mips_intr_t irq);
+
+/*! \brief Tear down processor interrupt handler. */
 void mips_intr_teardown(intr_handler_t *ih);
 
 #endif

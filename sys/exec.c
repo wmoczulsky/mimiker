@@ -12,7 +12,7 @@
 #include <sbrk.h>
 #include <vfs.h>
 #include <mips/stack.h>
-#include <mount.h>
+#include <interrupt.h>
 #include <vnode.h>
 #include <proc.h>
 
@@ -283,5 +283,6 @@ noreturn void run_program(const exec_args_t *prog) {
   if (do_exec(prog) != -EJUSTRETURN)
     panic("Failed to start %s program.", prog->argv[0]);
 
+  intr_disable();
   user_exc_leave();
 }

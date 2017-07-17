@@ -81,13 +81,13 @@ user_exc_enter:
         # not return and kernel context is not saved while entering user mode.
         # Hence we don't care about $sp and we can set it to kstack's bottom.
         LOAD_PCPU(t0)
-        lw      t0, PCPU_CURTHREAD(t0)
-        lw      sp, TD_KSTACK+STK_BASE(t0)
-        lw      t1, TD_KSTACK+STK_SIZE(t0)
-        add     sp, t1
+        lw      s0, PCPU_CURTHREAD(t0)
+        lw      sp, TD_KSTACK+STK_BASE(s0)
+        lw      t0, TD_KSTACK+STK_SIZE(s0)
+        add     sp, t0
 
         # No exeception frame so set td_frame to NULL.
-        sw      $0, TD_KFRAME(t0)
+        sw      $0, TD_KFRAME(s0)
 
         # Turn off FPU, enter kernel mode,
         # drop exception level and disable interrupts.
@@ -96,12 +96,16 @@ user_exc_enter:
         and     t0, t1
         mtc0    t0, C0_STATUS
 
+        # Set interrupt disable nest level to 1.
+        li      t0, 1
+        sw      t0, TD_IDNEST(s0)
+
         # Call C interrupt handler routine.
         move    a0, k0
         jalr    k1
         nop
 
-        # Interrupts may be enabled here and that's ok.
+        # Interrupts must not be enabled here!
         LOAD_PCPU(t0)
         lw      t0, PCPU_CURTHREAD(t0)
         lw      t1, TD_FLAGS(t0)
@@ -112,12 +116,25 @@ user_exc_enter:
         nop
 
 user_exc_leave:
-        # Disable interrupts and fetch C0_STATUS.
-        di      t0
+        # Enter exception level (disable interrupts till ERET).
+        mfc0    t0, C0_STATUS
+        ori     t0, SR_EXL
+        mtc0    t0, C0_STATUS
 
-        # Fetch the context from thread control block.
+        # Fetch thread control block.
         LOAD_PCPU(k0)
         lw      k0, PCPU_CURTHREAD(k0)
+
+        # Loop forever if someone messed up with interrupt disable nest level.
+        lw      t0, TD_IDNEST(k0)
+        addi    t0, -1
+1:      bne     t0, zero, 1b
+
+        # Loop forever if someone forgot to enable preemption.
+        lw      t0, TD_PDNEST(k0)
+2:      bne     t0, zero, 2b
+
+        # Load the context from TCB.
         addu    k0, TD_UCTX
 
         # Update status register held in user context.
@@ -231,11 +248,6 @@ kern_exc_enter:
         SAVE_REG(t2, BADVADDR, sp)
         SAVE_REG(t3, PC, sp)
 
-        # Drop exception level and disable interrupts.
-        li      t1, ~(SR_EXL|SR_IE)
-        and     t0, t1
-        mtc0    t0, C0_STATUS
-
         # Load kernel global pointer.
         la      gp, _gp
 
@@ -244,12 +256,21 @@ kern_exc_enter:
         lw      t0, PCPU_CURTHREAD(t0)
         sw      sp, TD_KFRAME(t0)
 
+        # Increase interrupt disable nest level.
+        jal     intr_disable
+        nop
+
+        # Drop exception level.
+        mfc0    t0, C0_STATUS
+        xori    t0, SR_EXL
+        mtc0    t0, C0_STATUS
+
         # Call C interrupt handler routine.
         move    a0, sp
         jalr    k1
         nop
 
-        # Interrupts may be enabled here and that's ok.
+        # Interrupts must not be enabled here!
         LOAD_PCPU(t0)
         lw      t0, PCPU_CURTHREAD(t0)
         lw      t1, TD_FLAGS(t0)
@@ -264,6 +285,10 @@ kern_exc_leave:
         mfc0    t0, C0_STATUS
         ori     t0, SR_EXL
         mtc0    t0, C0_STATUS
+
+        # Decrease interrupt disable nest level.
+        jal     intr_enable
+        nop
 
         # Update status register held in exception frame (only interrupt mask).
         LOAD_REG(t0, SR, sp)

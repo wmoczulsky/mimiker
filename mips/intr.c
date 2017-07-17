@@ -3,12 +3,11 @@
 #include <errno.h>
 #include <interrupt.h>
 #include <mips/exc.h>
-#include <mips/intr.h>
 #include <mips/mips.h>
-#include <pmap.h>
 #include <pmap.h>
 #include <queue.h>
 #include <stdc.h>
+#include <sched.h>
 #include <sysent.h>
 #include <thread.h>
 
@@ -92,6 +91,8 @@ void mips_intr_handler(exc_frame_t *frame) {
       intr_chain_run_handlers(&mips_intr_chain[i]);
       pending &= ~irq;
     }
+
+    assert(intr_disabled());
   }
 
   mips32_set_c0(C0_CAUSE, frame->cause & ~CR_IP_MASK);
@@ -139,9 +140,14 @@ static void cpu_get_syscall_args(const exc_frame_t *frame,
   args->args[3] = frame->a3;
 }
 
+/*! \brief System call exception handler.
+ *
+ * \warning The handler enables interrupts!
+ *
+ * \todo Eventually we will (?) pursue a platform-independent syscall entry,
+ * so argument retrieval is done separately.
+ */
 static void syscall_handler(exc_frame_t *frame) {
-  /* Eventually we will want a platform-independent syscall entry, so
-     argument retrieval is done separately */
   syscall_args_t args;
   cpu_get_syscall_args(frame, &args);
 
@@ -152,14 +158,21 @@ static void syscall_handler(exc_frame_t *frame) {
     goto finalize;
   }
 
+  /* System call handling is preemptible, so enable interrupts. */
+  intr_enable();
+
   /* Call the handler. */
   retval = sysent[args.code].call(thread_self(), &args);
+
+  /* Turn off interrupts and return to user space. */
+  intr_disable();
 
 finalize:
   if (retval != -EJUSTRETURN)
     exc_frame_set_retval(frame, retval);
 }
 
+/*! \brief Floating point exception handler. */
 static void fpe_handler(exc_frame_t *frame) {
   thread_t *td = thread_self();
   if (td->td_proc) {
@@ -169,10 +182,13 @@ static void fpe_handler(exc_frame_t *frame) {
   }
 }
 
-/*
- * This is exception vector table. Each exeception either has been assigned a
- * handler or kernel_oops is called for it. For exact meaning of exception
- * handlers numbers please check 5.23 Table of MIPS32 4KEc User's Manual.
+/*! \brief Exception vector table.
+ *
+ * Each exeception either has been assigned a handler or kernel_oops is called
+ * for it. For exact meaning of exception handlers numbers please check 5.23
+ * Table of MIPS32 4KEc User's Manual.
+ *
+ * \note All exception handlers are entered with interrupts disabled!
  */
 
 void *general_exception_table[32] = {[EXC_MOD] = tlb_exception_handler,
