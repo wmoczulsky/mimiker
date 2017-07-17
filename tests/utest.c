@@ -80,15 +80,18 @@ UTEST_ADD_SIMPLE(fd_open_path);
 UTEST_ADD_SIMPLE(fd_dup);
 UTEST_ADD_SIMPLE(fd_all);
 
+#if 0
 UTEST_ADD_SIMPLE(signal_basic);
 UTEST_ADD_SIMPLE(signal_send);
 UTEST_ADD_SIGNAL(signal_abort, SIGABRT);
 UTEST_ADD_SIGNAL(signal_segfault, SIGSEGV);
+#endif
 
+#if 0
 UTEST_ADD_SIMPLE(fork_wait);
-/* TODO Why this test takes so long to execute? */
-/* UTEST_ADD_SIMPLE(fork_signal); */
+UTEST_ADD_SIMPLE(fork_signal);
 UTEST_ADD_SIMPLE(fork_sigchld_ignored);
+#endif
 
 UTEST_ADD_SIMPLE(lseek_basic);
 UTEST_ADD_SIMPLE(lseek_errors);
