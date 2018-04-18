@@ -73,7 +73,8 @@ class QEMU(Launchable):
                         '-serial', 'none',
                         '-serial', 'null',
                         '-serial', 'null',
-                        '-serial', 'tcp:127.0.0.1:%d,server,wait' % port]
+                        '-serial', 'tcp:127.0.0.1:%d,server,wait' % port,
+                        '-drive', 'file=../debian9-ext2.img,if=ide']
         if kwargs['debug']:
             self.options += ['-S']
 
